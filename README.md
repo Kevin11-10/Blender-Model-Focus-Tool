@@ -2,7 +2,7 @@
 A Blender add on to allow to focus on one particular model selected and restore back to the view you left
 
 # Step 1: Install and Enable the Add-on
-Save the Code: Save the code block above as isolate_focus_keymap.py.
+Download the Code: Download the isolate_focus_keymap.py file.
 
 Install: In Blender (version 4.1 or newer), go to Edit → Preferences... → Add-ons.
 
