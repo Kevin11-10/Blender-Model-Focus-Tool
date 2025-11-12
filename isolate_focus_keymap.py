@@ -1,43 +1,53 @@
 import bpy
-from bpy.props import StringProperty, EnumProperty
+from bpy.props import StringProperty, EnumProperty, FloatVectorProperty, FloatProperty
 from bpy_extras.io_utils import ImportHelper
 
-# --- 1. Bl_Info: Add-on Registration Details (Updated for Blender 4.4.0) ---
+# --- 1. Bl_Info: Add-on Registration Details ---
 bl_info = {
-    "name": "Isolate and Focus Tool",
-    "author": "K-Tech",
-    "version": (1, 0, 0), 
+    "name": "Isolate and Focus Tool (View Restore Final Fix)",
+    "author": "K3D Studio",
+    "version": (1, 1, 3), 
     "blender": (4, 1, 0), 
     "location": "3D Viewport, Shortcut: Ctrl + Alt + F",
-    "description": "Toggles 'Isolate and Focus' mode for the active object with custom shortcut.",
+    "description": "Toggles 'Isolate and Focus' mode for the active object, reliably restoring the previous viewport view.",
     "category": "3D View",
 }
 
 # --- Shared Variables for Keymap Registration ---
 addon_keymaps = []
 
-# --- 2. Scene Property to Track Hidden Objects (Same as before) ---
-bpy.types.Scene.isolated_objects_data = bpy.props.StringProperty(
-    name="Isolated Objects Data",
-    default="",
-)
 
-# --- 3. The Core Operator Class (Same as before, with a slight adjustment for context) ---
+# --- Helper Function to Get the Active 3D View Data ---
+def get_view3d_region_data(context):
+    """Finds and returns the active 3D View region data."""
+    if context.area and context.area.type == 'VIEW_3D':
+        for region in context.area.regions:
+            if region.type == 'WINDOW':
+                # This region contains the view data we need
+                return region.data
+    return None
+
+
+# --- 3. The Core Operator Class (Using Location/Rotation/Distance) ---
 class VIEW3D_OT_isolate_focus(bpy.types.Operator):
     """Isolate the active object and frame it in the viewport."""
     bl_idname = "view3d.isolate_focus_toggle"
-    bl_label = "Isolate and Focus"
+    bl_label = "Isolate and Focus (Toggle)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        """Enable the operator only if an object is selected."""
-        # Ensure we have a valid 3D View context for keymap use
-        return context.active_object is not None and context.area.type == 'VIEW_3D'
+        """Enable the operator only if an object is selected and we are in VIEW_3D."""
+        return context.active_object is not None and context.area and context.area.type == 'VIEW_3D'
 
     def execute(self, context):
         scene = context.scene
         active_obj = context.active_object
+        rv3d = get_view3d_region_data(context)
+        
+        if not rv3d:
+            self.report({'ERROR'}, "Could not find 3D Viewport data.")
+            return {'CANCELLED'}
         
         # Check if the scene property contains data, indicating the mode is active
         is_isolated = bool(scene.isolated_objects_data)
@@ -45,20 +55,22 @@ class VIEW3D_OT_isolate_focus(bpy.types.Operator):
         if not is_isolated:
             # --- ISOLATE MODE (First Click) ---
             
-            # 1. Store and Hide
-            hidden_names = []
+            # 1. SAVE VIEW STATE: Save location, rotation, AND DISTANCE
+            scene.saved_view_location = rv3d.view_location
+            scene.saved_view_rotation = rv3d.view_rotation
+            scene.saved_view_distance = rv3d.view_distance
             
-            for obj in context.view_layer.objects:
-                # We hide all objects except the active one
+            # 2. Store and Hide
+            hidden_names = []
+            for obj in context.view_layer.objects: 
                 if obj.hide_get() == False and obj != active_obj:
                     obj.hide_set(True)
                     hidden_names.append(obj.name)
             
-            # 2. Save State
+            # 3. Save State
             scene.isolated_objects_data = ",".join(hidden_names)
             
-            # 3. Focus
-            # We call view_selected without parameters for default frame behavior
+            # 4. Focus (Changes the view)
             bpy.ops.view3d.view_selected('INVOKE_DEFAULT') 
 
             self.report({'INFO'}, f"Isolated {active_obj.name} and Framed View.")
@@ -72,44 +84,45 @@ class VIEW3D_OT_isolate_focus(bpy.types.Operator):
             # 2. Restore Visibility
             for name in hidden_names:
                 obj = scene.objects.get(name)
-                # Check obj to prevent crash if object was deleted while isolated
                 if obj:
                     obj.hide_set(False)
 
-            # 3. Clear State and Reset View
+            # 3. RESTORE VIEW STATE: Restore location, rotation, AND DISTANCE
+            rv3d.view_location = scene.saved_view_location
+            rv3d.view_rotation = scene.saved_view_rotation
+            rv3d.view_distance = scene.saved_view_distance
+            
+            # 4. Clear State
             scene.isolated_objects_data = ""
+            scene.saved_view_location = [0.0] * 3
+            scene.saved_view_rotation = [0.0] * 4
+            scene.saved_view_distance = 0.0 # Clear distance property
             
-            
-
-            self.report({'INFO'}, "Scene Restored.")
+            self.report({'INFO'}, "Scene and View Restored.")
 
         return {'FINISHED'}
 
 
-# --- 4. Addon Preferences for Custom Shortcut ---
+# --- 4. Addon Preferences ---
 class IsolateFocusPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
 
-    # Property to select the main key (e.g., 'F', 'I', etc.)
     shortcut_key: EnumProperty(
         name="Main Key",
         items=[(item, item, "") for item in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
         default='F',
     )
     
-    # Property for Ctrl modifier
     use_ctrl: bpy.props.BoolProperty(
         name="Use Ctrl",
         default=True,
     )
     
-    # Property for Alt modifier
     use_alt: bpy.props.BoolProperty(
         name="Use Alt",
         default=True,
     )
     
-    # Property for Shift modifier
     use_shift: bpy.props.BoolProperty(
         name="Use Shift",
         default=False,
@@ -119,11 +132,9 @@ class IsolateFocusPreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.label(text="Customize Isolate and Focus Shortcut:")
         
-        # Row for the Key
         row = layout.row()
         row.prop(self, "shortcut_key")
         
-        # Row for Modifiers
         row = layout.row(align=True)
         row.prop(self, "use_ctrl")
         row.prop(self, "use_alt")
@@ -134,17 +145,16 @@ class IsolateFocusPreferences(bpy.types.AddonPreferences):
 # --- 5. Keymap Registration Logic ---
 
 def register_keymaps():
-    # Clear any previous keymaps from this addon
     unregister_keymaps() 
 
-    # Get the addon preferences
-    prefs = bpy.context.preferences.addons[__name__].preferences
+    try:
+        prefs = bpy.context.preferences.addons[__name__].preferences
+    except KeyError:
+        return
     
-    # Define the keymap parameters
     wm = bpy.context.window_manager
     km = wm.keyconfigs.addon.keymaps.new(name='3D View', space_type='VIEW_3D')
     
-    # Add a new keymap item (kmi)
     kmi = km.keymap_items.new(
         VIEW3D_OT_isolate_focus.bl_idname, 
         type=prefs.shortcut_key, 
@@ -154,7 +164,6 @@ def register_keymaps():
         shift=prefs.use_shift
     )
     
-    # Store the created keymap for clean unregistration
     addon_keymaps.append(km)
 
 def unregister_keymaps():
@@ -175,9 +184,11 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     
-    # Register the custom property
-    if not hasattr(bpy.types.Scene, 'isolated_objects_data'):
-        bpy.types.Scene.isolated_objects_data = StringProperty(default="")
+    # Register the custom properties (View Restore Fix properties)
+    bpy.types.Scene.isolated_objects_data = StringProperty(default="")
+    bpy.types.Scene.saved_view_location = FloatVectorProperty(size=3, default=[0.0] * 3)
+    bpy.types.Scene.saved_view_rotation = FloatVectorProperty(size=4, default=[0.0] * 4)
+    bpy.types.Scene.saved_view_distance = FloatProperty(default=0.0) # <-- NEW PROPERTY REGISTRATION
     
     # Register the keymap
     register_keymaps()
@@ -189,9 +200,15 @@ def unregister():
     # Unregister the keymap FIRST
     unregister_keymaps()
     
-    # Clean up the custom property when unregistering
+    # Clean up the custom properties when unregistering
     if hasattr(bpy.types.Scene, 'isolated_objects_data'):
         del bpy.types.Scene.isolated_objects_data
+    if hasattr(bpy.types.Scene, 'saved_view_location'):
+        del bpy.types.Scene.saved_view_location
+    if hasattr(bpy.types.Scene, 'saved_view_rotation'):
+        del bpy.types.Scene.saved_view_rotation
+    if hasattr(bpy.types.Scene, 'saved_view_distance'):
+        del bpy.types.Scene.saved_view_distance # <-- NEW PROPERTY CLEANUP
         
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
