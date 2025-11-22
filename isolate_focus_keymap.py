@@ -5,7 +5,7 @@ from bpy_extras.io_utils import ImportHelper
 # --- 1. Bl_Info: Add-on Registration Details ---
 bl_info = {
     "name": "Isolate and Focus Tool (View Restore Final Fix)",
-    "author": "K3D Studio",
+    "author": "K-Tech Studio",
     "version": (1, 1, 3), 
     "blender": (4, 1, 0), 
     "location": "3D Viewport, Shortcut: Ctrl + Alt + F",
